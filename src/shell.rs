@@ -104,7 +104,7 @@ impl Env<'_> {
 
     fn pwm_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
         match btoi::btoi::<u32>(args.as_bytes()) {
-            Ok(freq) => {
+            Ok(freq) if freq <= 1_000_000 => {
                 self.pwm.lock(|pwm| {
                     pwm.set_freq(freq.hz());
                 });
@@ -157,32 +157,26 @@ impl Env<'_> {
     }
 
     fn pin_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
-        match args.split_once(" ") {
-            Some((pin, level)) => {
-                match (pin, level) {
-                    ("a", "high") => {
-                        self.pin_a.lock(|pin| pin.set_high().ok());
-                    }
-                    ("a", "low") => {
-                        self.pin_a.lock(|pin| pin.set_low().ok());
-                    }
-                    ("b", "high") => {
-                        self.pin_b.lock(|pin| pin.set_high().ok());
-                    }
-                    ("b", "low") => {
-                        self.pin_b.lock(|pin| pin.set_low().ok());
-                    }
-                    _ => {
-                        write!(shell, "{0:}unsupported pin arguments{0:}", CR).ok();
-                        return Ok(());
-                    }
-                }
-                shell.write_str(CR).ok();
+        match args {
+            "a high" => {
+                self.pin_a.lock(|pin| pin.set_high().ok());
             }
-            None => {
-                write!(shell, "{0:}invalid pin arguments{0:}", CR).ok();
+            "a low" => {
+                self.pin_a.lock(|pin| pin.set_low().ok());
+            }
+            "b high" => {
+                self.pin_b.lock(|pin| pin.set_high().ok());
+            }
+            "b low" => {
+                self.pin_b.lock(|pin| pin.set_low().ok());
+            }
+            _ => {
+                write!(shell, "{0:}unsupported pin arguments{0:}", CR).ok();
+                return Ok(());
             }
         }
+        shell.write_str(CR).ok();
+
         Ok(())
     }
 
@@ -190,7 +184,7 @@ impl Env<'_> {
         match args
             .strip_suffix("us")
             .map(|us| (us, 1))
-            .or_else(||args.strip_suffix("ms").map(|ms| (ms, 1_000)))
+            .or_else(|| args.strip_suffix("ms").map(|ms| (ms, 1_000)))
         {
             Some((width, mul)) => match btoi::btoi::<u32>(width.as_bytes()) {
                 Ok(pulse) => {
@@ -262,7 +256,15 @@ impl Env<'_> {
                             return Ok(());
                         }
                     }
-                    self.stepper_timer.lock(|tim| tim.start(speed.hz()));
+                    if speed > 0 {
+                        self.stepper_timer.lock(|tim| tim.start(speed.hz()));
+                    } else {
+                        (&mut self.stepper, &mut self.stepper_timer).lock(|stepper, tim| {
+                            tim.pause();
+                            tim.clear_irq();
+                            stepper.disable();
+                        });
+                    }
                     shell.write_str(CR).ok();
                 }
                 _ => {
@@ -270,7 +272,7 @@ impl Env<'_> {
                 }
             },
             None => {
-                write!(shell, "{0:}invalid stepper arguments{0:}", CR).ok();
+                write!(shell, "{0:}invalid spin arguments{0:}", CR).ok();
             }
         }
         Ok(())
@@ -281,22 +283,22 @@ pub const AUTOCOMPLETE: Autocomplete = StaticAutocomplete([
     "adc",
     "clear",
     "duty ",
-    "help",
+    "help ",
     "help pinout",
     "help usage",
-    "pulse ",
-    "pwm ",
     "pin ",
     "pin a high",
     "pin a low",
     "pin b high",
     "pin b low",
+    "pulse ",
+    "pwm ",
     "servo ",
     "spin ",
     "trigger ",
-    "trigger rise",
     "trigger fall",
     "trigger off",
+    "trigger rise",
 ]);
 
 const CR: &str = "\r\n";

@@ -101,7 +101,6 @@ mod app {
         pwm_ch3.enable();
 
         let mut stepper_timer = ctx.device.TIM16.timer(&mut rcc);
-        stepper_timer.start(1.hz());
         stepper_timer.listen();
 
         let stepper = stepper::Stepper::new(
@@ -164,8 +163,8 @@ mod app {
         let mut opm = ctx.shared.opm;
         let exti = ctx.local.exti;
         let generate = trigger.lock(|t| match t {
-            Some(SignalEdge::Falling) if exti.is_pending(exti::Event::GPIO15, SignalEdge::Falling) => true,
-            Some(SignalEdge::Rising) if exti.is_pending(exti::Event::GPIO15, SignalEdge::Rising)  => true,
+            Some(SignalEdge::Falling) => exti.is_pending(exti::Event::GPIO15, SignalEdge::Falling),
+            Some(SignalEdge::Rising) => exti.is_pending(exti::Event::GPIO15, SignalEdge::Rising),
             _ => false
         });
         if generate {
