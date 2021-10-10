@@ -105,9 +105,20 @@ impl Env<'_> {
     fn pwm_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
         match btoi::btoi::<u32>(args.as_bytes()) {
             Ok(freq) if freq <= 1_000_000 => {
-                self.pwm.lock(|pwm| {
-                    pwm.set_freq(freq.hz());
-                });
+                (
+                    &mut self.pwm,
+                    &mut self.pwm_ch1,
+                    &mut self.pwm_ch2,
+                    &mut self.pwm_ch3,
+                )
+                    .lock(|pwm, ch1, ch2, ch3| {
+                        pwm.set_freq(freq.hz());
+
+                        let duty = ch1.get_max_duty() / 2;
+                        ch1.set_duty(duty);
+                        ch2.set_duty(duty);
+                        ch3.set_duty(duty);
+                    });
                 shell.write_str(CR).ok();
             }
             _ => {
