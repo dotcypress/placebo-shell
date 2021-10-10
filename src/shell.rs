@@ -318,8 +318,8 @@ COMMANDS:\r\n\
 \x20 clear                Clear screen\r\n\r\n\
 CONTROL KEYS:\r\n\
 \x20 Ctrl+Z               Emulate pulse trigger\r\n\
-\x20 Ctrl+X / Ctrl+C      Assert/De-assert pin A\r\n\
-\x20 Ctrl+S / Ctrl+D      Assert/De-assert pin B\r\n\r\n\
+\x20 Ctrl+X / Ctrl+C      Assert/De-assert pin A(Push-Pull)\r\n\
+\x20 Ctrl+S / Ctrl+D      Assert/De-assert pin B(Open-Drain)\r\n\r\n\
 LINKS:\r\n\
 \x20 * \x1b[34mhttps://github.com/dotcypress/placebo-shell \x1b[0m\r\n\
 \x20 * \x1b[34mhttps://github.com/dotcypress/placebo \x1b[0m\r\n\r\n\
@@ -328,7 +328,7 @@ LINKS:\r\n\
 const USAGE: &str = "\r\n\
 USAGE EXAMPLES:\r\n\
 \x20 help pinout     Print pinout\r\n\
-\x20 duty 1 50       Set duty cycle to 50%\r\n\
+\x20 duty 1 50       Set PWM channel 1 duty cycle to 50%\r\n\
 \x20 pin a high      Assert pin A\r\n\
 \x20 pin b low       De-assert pin B\r\n\
 \x20 pwm 1000        Set PWM freqency to 1KHz\r\n\
