@@ -39,7 +39,7 @@ mod app {
         opm: opm::Opm<stm32::TIM2>,
         trigger: Option<SignalEdge>,
         pin_a: gpiob::PB7<Output<PushPull>>,
-        pin_b: gpioc::PC14<Output<PushPull>>,
+        pin_b: gpioc::PC14<Output<OpenDrain>>,
         stepper: Stepper,
         stepper_timer: Timer<stm32::TIM16>,
         servo: pwm::PwmPin<stm32::TIM14, Channel1>,

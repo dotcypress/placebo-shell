@@ -325,16 +325,16 @@ LINKS:\r\n\
 
 const USAGE: &str = "\r\n\
 USAGE EXAMPLES:\r\n\
-\x20 help pinout        Print pinout\r\n\
-\x20 duty 1 50          Set duty cycle to 50%\r\n\
-\x20 pin a high         Assert pin A\r\n\
-\x20 pin b low          De-assert pin B\r\n\
-\x20 pwm 1000           Set PWM freqency to 1KHz\r\n\
-\x20 pulse 120us        Generate 120 microseconds pulse\r\n\
-\x20 servo 45           Turn servo to 45 degrees\r\n\
-\x20 trigger fall       Set external trigger to falling edge\r\n\
-\x20 trigger off        Disable pulse external trigger\r\n\
-\x20 spin cw 200        Rotate stepper clock-wise 200 pulses per second\r\n\r\n\
+\x20 help pinout     Print pinout\r\n\
+\x20 duty 1 50       Set duty cycle to 50%\r\n\
+\x20 pin a high      Assert pin A\r\n\
+\x20 pin b low       De-assert pin B\r\n\
+\x20 pwm 1000        Set PWM freqency to 1KHz\r\n\
+\x20 pulse 120us     Generate 120 microseconds pulse\r\n\
+\x20 servo 45        Turn servo to 45 degrees\r\n\
+\x20 trigger fall    Set external trigger to falling edge\r\n\
+\x20 trigger off     Disable pulse external trigger\r\n\
+\x20 spin cw 200     Rotate stepper clock-wise 200 pulses per second\r\n\r\n\
 ";
 
 const PINOUT: &str = "\r\n\
