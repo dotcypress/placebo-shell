@@ -1,0 +1,25 @@
+[package]
+name = "placebo-shell"
+authors = ["Vitaly Domnikov <dotcypress@gmail.com>"]
+edition = "2018"
+license = "MIT/Apache-2.0"
+readme = "README.md"
+version = "0.0.1"
+
+[dependencies]
+cortex-m = "0.7.1"
+cortex-m-rt = "0.6.10"
+cortex-m-rtic = "0.6.0-rc.2"
+panic-halt = "0.2.0"
+ushell = { git = "https://github.com/dotcypress/ushell", branch = "main" }
+stm32g0xx-hal = { git = "https://github.com/stm32-rs/stm32g0xx-hal", branch = "main", features = ["rt", "stm32g031"] }
+btoi = { version = "0.4.2", default-features = false }
+
+[profile.dev]
+incremental = false
+opt-level = 2
+
+[profile.release]
+incremental = false
+lto = true
+opt-level = "z"
