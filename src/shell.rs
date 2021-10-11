@@ -40,8 +40,11 @@ impl Environment<Serial, Autocomplete, History, (), { CMD_MAX_LEN }> for Env<'_>
                 .map_err(ShellError::FormatError)
                 .map_err(SpinError::ShellError),
         }?;
-        shell.write_str(SHELL_PROMPT).ok();
-        Ok(())
+
+        shell
+            .write_str(SHELL_PROMPT)
+            .map_err(ShellError::FormatError)
+            .map_err(SpinError::ShellError)
     }
 
     fn control(&mut self, _shell: &mut Shell, code: u8) -> EnvResult {
