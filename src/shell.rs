@@ -1,173 +1,120 @@
+use btoi::btoi;
 use core::fmt::Write;
 use hal::prelude::*;
-use hal::serial;
-use hal::stm32;
-use rtic::mutex_prelude::*;
+use hal::{gpio::SignalEdge, serial, stm32};
 use rtic::Mutex;
-use stm32g0xx_hal::gpio::SignalEdge;
-use ushell::ShellError;
-use ushell::SpinError;
-use ushell::{autocomplete::StaticAutocomplete, control, history::LRUHistory, Environment, UShell};
+use ushell::*;
 
 pub const CMD_MAX_LEN: usize = 32;
 
-pub type Autocomplete = StaticAutocomplete<19>;
-pub type History = LRUHistory<{ CMD_MAX_LEN }, 32>;
-pub type Serial = serial::Serial<stm32::USART2, serial::BasicConfig>;
-pub type Shell = UShell<Serial, Autocomplete, History, { CMD_MAX_LEN }>;
-pub type Env<'a> = crate::app::serial_data::SharedResources<'a>;
-pub type EnvResult = Result<(), ushell::SpinError<Serial, ()>>;
+pub type Autocomplete = autocomplete::StaticAutocomplete<19>;
+pub type History = history::LRUHistory<{ CMD_MAX_LEN }, 32>;
+pub type Uart = serial::Serial<stm32::USART2, serial::BasicConfig>;
+pub type Shell = UShell<Uart, Autocomplete, History, { CMD_MAX_LEN }>;
 
-impl Environment<Serial, Autocomplete, History, (), { CMD_MAX_LEN }> for Env<'_> {
-    fn command(&mut self, shell: &mut Shell, cmd: &str, args: &str) -> EnvResult {
-        match cmd {
-            "adc" => self.adc_cmd(shell, args),
-            "pwm" => self.pwm_cmd(shell, args),
-            "duty" => self.duty_cmd(shell, args),
-            "spin" => self.spin_cmd(shell, args),
-            "pulse" => self.opm_cmd(shell, args),
-            "trigger" => self.trigger_cmd(shell, args),
-            "servo" => self.servo_cmd(shell, args),
-            "pin" => self.pin_cmd(shell, args),
-            "help" => self.help_cmd(shell, args),
-            "clear" => shell.clear().map_err(SpinError::ShellError),
-            "" => shell
-                .write_str(CR)
-                .map_err(ShellError::FormatError)
-                .map_err(SpinError::ShellError),
-
-            _ => write!(shell, "{0:}unsupported command{0:}", CR)
-                .map_err(ShellError::FormatError)
-                .map_err(SpinError::ShellError),
-        }?;
-
-        shell
-            .write_str(SHELL_PROMPT)
-            .map_err(ShellError::FormatError)
-            .map_err(SpinError::ShellError)
-    }
-
-    fn control(&mut self, _shell: &mut Shell, code: u8) -> EnvResult {
-        match code {
-            control::CTRL_X => self.pin_a.lock(|pin| pin.set_high()),
-            control::CTRL_C => self.pin_a.lock(|pin| pin.set_low()),
-            control::CTRL_S => self.pin_b.lock(|pin| pin.set_high()),
-            control::CTRL_D => self.pin_b.lock(|pin| pin.set_low()),
-            control::CTRL_Z => self.opm.lock(|opm| {
-                opm.generate();
-                Ok(())
-            }),
-            _ => Ok(()),
-        }
-        .ok();
-        Ok(())
-    }
+pub enum ShellSignal {
+    ReadUart,
+    ReadAdc,
 }
 
+pub type Env<'a> = crate::app::env::SharedResources<'a>;
+pub type EnvResult = SpinResult<Uart, ()>;
+
 impl Env<'_> {
-    fn help_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
-        match args {
-            "pinout" => shell.write_str(PINOUT),
-            "usage" => shell.write_str(USAGE),
-            _ => shell.write_str(HELP),
+    pub fn on_signal(&mut self, shell: &mut Shell, sig: ShellSignal) -> EnvResult {
+        match sig {
+            ShellSignal::ReadUart => shell.spin(self),
+            ShellSignal::ReadAdc => {
+                let voltage = self.adc.lock(|adc| {
+                    adc.timer.clear_irq();
+                    adc.adc.read_voltage(&mut adc.pin).unwrap()
+                });
+                write!(shell, "{}mV\r\n", voltage)?;
+                Ok(())
+            }
         }
-        .map_err(ShellError::FormatError)
-        .map_err(SpinError::ShellError)
     }
 
-    fn adc_cmd(&mut self, shell: &mut Shell, _args: &str) -> EnvResult {
-        let (vdd, vpin) =
-            (&mut self.adc, &mut self.adc_pin, &mut self.vbat).lock(|adc, pin, vbat| {
-                let vdd = adc.read_voltage(vbat).expect("adc read failed");
-                let vpin = adc.read_voltage(pin).expect("adc read failed");
+    fn adc_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
+        if args.len() == 0 {
+            let (vdd, vpin) = self.adc.lock(|adc| {
+                let vdd = adc.adc.read_voltage(&mut adc.vbat).unwrap();
+                let vpin = adc.adc.read_voltage(&mut adc.pin).unwrap();
                 (vdd * 3, vpin)
             });
-        write!(shell, "{0:}Vbat: {1:}mV{0:}Vpin: {2:}mV{0:}", CR, vdd, vpin)
-            .map_err(ShellError::FormatError)
-            .map_err(SpinError::ShellError)
+            write!(shell, "{0:}Vbat: {1:}mV{0:}Vpin: {2:}mV{0:}", CR, vdd, vpin)?;
+        } else {
+            match btoi::<u32>(args.as_bytes()) {
+                Ok(freq) if freq <= 1_000_000 => {
+                    self.adc.lock(|adc| adc.timer.start(freq.hz()));
+                    shell.write_str(CR)?;
+                }
+                _ => write!(shell, "{0:}invalid adc arguments{0:}", CR)?,
+            }
+        }
+        Ok(())
     }
 
     fn pwm_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
-        match btoi::btoi::<u32>(args.as_bytes()) {
+        match btoi::<u32>(args.as_bytes()) {
             Ok(freq) if freq <= 1_000_000 => {
-                (
-                    &mut self.pwm,
-                    &mut self.pwm_ch1,
-                    &mut self.pwm_ch2,
-                    &mut self.pwm_ch3,
-                )
-                    .lock(|pwm, ch1, ch2, ch3| {
-                        pwm.set_freq(freq.hz());
+                self.pwm.lock(|pwm| {
+                    pwm.pwm.set_freq(freq.hz());
 
-                        let duty = ch1.get_max_duty() / 2;
-                        ch1.set_duty(duty);
-                        ch2.set_duty(duty);
-                        ch3.set_duty(duty);
-                    });
-                shell
-                    .write_str(CR)
-                    .map_err(ShellError::FormatError)
-                    .map_err(SpinError::ShellError)
+                    let duty = pwm.ch1.get_max_duty() / 2;
+                    pwm.ch1.set_duty(duty);
+                    pwm.ch2.set_duty(duty);
+                    pwm.ch3.set_duty(duty);
+                });
+                shell.write_str(CR)?;
             }
-            _ => write!(shell, "{0:}unsupported PWM frequency{0:}", CR)
-                .map_err(ShellError::FormatError)
-                .map_err(SpinError::ShellError),
+            _ => write!(shell, "{0:}unsupported PWM frequency{0:}", CR)?,
         }
+        Ok(())
     }
 
     fn duty_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
         match args.split_once(" ") {
-            Some((ch, duty)) => match btoi::btoi::<u32>(duty.as_bytes()) {
+            Some((ch, duty)) => match btoi::<u32>(duty.as_bytes()) {
                 Ok(duty) if duty <= 100 => {
                     let duty = match duty {
                         0 => 0,
                         duty => {
-                            let max_duty = self.pwm_ch1.lock(|ch| ch.get_max_duty());
+                            let max_duty = self.pwm.lock(|pwm| pwm.ch1.get_max_duty());
                             max_duty * duty / 100
                         }
                     };
                     match ch {
-                        "1" => self.pwm_ch1.lock(|ch| ch.set_duty(duty)),
-                        "2" => self.pwm_ch2.lock(|ch| ch.set_duty(duty)),
-                        "3" => self.pwm_ch3.lock(|ch| ch.set_duty(duty)),
+                        "1" => self.pwm.lock(|pwm| pwm.ch1.set_duty(duty)),
+                        "2" => self.pwm.lock(|pwm| pwm.ch2.set_duty(duty)),
+                        "3" => self.pwm.lock(|pwm| pwm.ch3.set_duty(duty)),
                         _ => {
-                            return write!(shell, "{0:}unsupported PWM channel{0:}", CR)
-                                .map_err(ShellError::FormatError)
-                                .map_err(SpinError::ShellError);
+                            write!(shell, "{}unsupported PWM channel: \"{}\"", CR, ch)?;
                         }
                     }
-                    shell
-                        .write_str(CR)
-                        .map_err(ShellError::FormatError)
-                        .map_err(SpinError::ShellError)
+                    shell.write_str(CR)?;
                 }
-                _ => write!(shell, "{0:}unsupported duty cycle{0:}", CR)
-                    .map_err(ShellError::FormatError)
-                    .map_err(SpinError::ShellError),
+                _ => write!(shell, "{0:}unsupported duty cycle{0:}", CR)?,
             },
-            None => write!(shell, "{0:}invalid duty arguments{0:}", CR)
-                .map_err(ShellError::FormatError)
-                .map_err(SpinError::ShellError),
+            None => write!(shell, "{0:}invalid duty arguments{0:}", CR)?,
         }
+        Ok(())
     }
 
     fn pin_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
         match args {
-            "a high" => self.pin_a.lock(|pin| pin.set_high()),
-            "a low" => self.pin_a.lock(|pin| pin.set_low()),
-            "b high" => self.pin_b.lock(|pin| pin.set_high()),
-            "b low" => self.pin_b.lock(|pin| pin.set_low()),
+            "a high" => self.gpio.lock(|gpio| gpio.pin_a.set_high()),
+            "a low" => self.gpio.lock(|gpio| gpio.pin_a.set_low()),
+            "b high" => self.gpio.lock(|gpio| gpio.pin_b.set_high()),
+            "b low" => self.gpio.lock(|gpio| gpio.pin_b.set_low()),
             _ => {
-                return write!(shell, "{0:}unsupported pin arguments{0:}", CR)
-                    .map_err(ShellError::FormatError)
-                    .map_err(SpinError::ShellError);
+                write!(shell, "{}unsupported pin arguments: \"{}\"", CR, args)?;
+                Ok(())
             }
         }
         .ok();
-        shell
-            .write_str(CR)
-            .map_err(ShellError::FormatError)
-            .map_err(SpinError::ShellError)
+        shell.write_str(CR)?;
+        Ok(())
     }
 
     fn opm_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
@@ -176,26 +123,20 @@ impl Env<'_> {
             .map(|us| (us, 1))
             .or_else(|| args.strip_suffix("ms").map(|ms| (ms, 1_000)))
         {
-            Some((width, mul)) => match btoi::btoi::<u32>(width.as_bytes()) {
+            Some((width, mul)) => match btoi::<u32>(width.as_bytes()) {
                 Ok(pulse) => {
                     let pulse = (pulse * mul).us();
                     self.opm.lock(|opm| {
                         opm.set_pulse(pulse);
                         opm.generate();
                     });
-                    shell
-                        .write_str(CR)
-                        .map_err(ShellError::FormatError)
-                        .map_err(SpinError::ShellError)
+                    shell.write_str(CR)?;
                 }
-                _ => write!(shell, "{0:}unsupported pulse width{0:}", CR)
-                    .map_err(ShellError::FormatError)
-                    .map_err(SpinError::ShellError),
+                _ => write!(shell, "{0:}unsupported pulse width{0:}", CR)?,
             },
-            None => write!(shell, "{0:}unsupported pulse unit{0:}", CR)
-                .map_err(ShellError::FormatError)
-                .map_err(SpinError::ShellError),
+            None => write!(shell, "{0:}unsupported pulse unit{0:}", CR)?,
         }
+        Ok(())
     }
 
     fn trigger_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
@@ -203,80 +144,119 @@ impl Env<'_> {
             "rise" => Some(SignalEdge::Rising),
             "fall" => Some(SignalEdge::Falling),
             "off" => None,
-            _ => {
-                return write!(shell, "{0:}unsupported trigger{0:}", CR)
-                    .map_err(ShellError::FormatError)
-                    .map_err(SpinError::ShellError);
+            trig => {
+                write!(
+                    shell,
+                    "{0:}unsupported trigger type: \"{1:}\"{0:}",
+                    CR, trig
+                )?;
+                return Ok(());
             }
         };
-        self.trigger.lock(|t| *t = trigger);
-        shell
-            .write_str(CR)
-            .map_err(ShellError::FormatError)
-            .map_err(SpinError::ShellError)
+        self.gpio.lock(|gpio| gpio.trigger = trigger);
+        shell.write_str(CR)?;
+        Ok(())
     }
 
     fn servo_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
-        match btoi::btoi::<u32>(args.as_bytes()) {
+        match btoi::<u32>(args.as_bytes()) {
             Ok(angle) if angle <= 180 => {
                 let max_duty = self.servo.lock(|servo| servo.get_max_duty()) as u32;
                 let duty = (max_duty * 5 + (max_duty * 20 * angle) / 180) / 100;
                 self.servo.lock(|servo| {
                     servo.set_duty(duty as _);
                 });
-                shell
-                    .write_str(CR)
-                    .map_err(ShellError::FormatError)
-                    .map_err(SpinError::ShellError)
+                shell.write_str(CR)?;
             }
-            _ => write!(shell, "{0:}unsupported servo angle{0:}", CR)
-                .map_err(ShellError::FormatError)
-                .map_err(SpinError::ShellError),
+            _ => write!(shell, "{0:}unsupported servo angle{0:}", CR)?,
         }
+        Ok(())
     }
 
     fn spin_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
-        use crate::stepper::Rotation;
+        use crate::stepper::Rotation::*;
 
         match args.split_once(" ") {
-            Some((dir, speed)) => match btoi::btoi::<u32>(speed.as_bytes()) {
+            Some((dir, speed)) => match btoi::<u32>(speed.as_bytes()) {
                 Ok(speed) => {
                     match dir {
-                        "cw" => self.stepper.lock(|stepper| stepper.set_dir(Rotation::Cw)),
-                        "ccw" => self.stepper.lock(|stepper| stepper.set_dir(Rotation::Ccw)),
+                        "cw" => self.stepper.lock(|st| st.motor.set_dir(Cw)),
+                        "ccw" => self.stepper.lock(|st| st.motor.set_dir(Ccw)),
                         _ => {
-                            return write!(shell, "{0:}unsupported direction{0:}", CR)
-                                .map_err(ShellError::FormatError)
-                                .map_err(SpinError::ShellError);
+                            write!(shell, "{0:}unsupported direction{0:}", CR)?;
+                            return Ok(());
                         }
                     }
-                    if speed > 0 {
-                        self.stepper_timer.lock(|tim| tim.start(speed.hz()));
-                    } else {
-                        (&mut self.stepper, &mut self.stepper_timer).lock(|stepper, tim| {
-                            tim.pause();
-                            tim.clear_irq();
-                            stepper.disable();
-                        });
-                    }
-                    shell
-                        .write_str(CR)
-                        .map_err(ShellError::FormatError)
-                        .map_err(SpinError::ShellError)
+
+                    self.stepper.lock(|st| {
+                        if speed > 0 {
+                            st.timer.start(speed.hz());
+                        } else {
+                            st.motor.disable();
+                            st.timer.pause();
+                            st.timer.clear_irq();
+                        }
+                    });
+                    shell.write_str(CR)?;
                 }
-                _ => write!(shell, "{0:}unsupported speed{0:}", CR)
-                    .map_err(ShellError::FormatError)
-                    .map_err(SpinError::ShellError),
+                _ => write!(shell, "{0:}unsupported speed{0:}", CR)?,
             },
-            None => write!(shell, "{0:}invalid spin arguments{0:}", CR)
-                .map_err(ShellError::FormatError)
-                .map_err(SpinError::ShellError),
+            None => write!(shell, "{0:}invalid spin arguments{0:}", CR)?,
         }
+
+        Ok(())
+    }
+
+    fn help_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
+        match args {
+            "pinout" => shell.write_str(PINOUT)?,
+            "usage" => shell.write_str(USAGE)?,
+            _ => shell.write_str(HELP)?,
+        }
+        Ok(())
     }
 }
 
-pub const AUTOCOMPLETE: Autocomplete = StaticAutocomplete([
-    "adc",
+impl Environment<Uart, Autocomplete, History, (), { CMD_MAX_LEN }> for Env<'_> {
+    fn command(&mut self, shell: &mut Shell, cmd: &str, args: &str) -> EnvResult {
+        match cmd {
+            "clear" => shell.clear()?,
+            "adc" => self.adc_cmd(shell, args)?,
+            "duty" => self.duty_cmd(shell, args)?,
+            "help" => self.help_cmd(shell, args)?,
+            "pin" => self.pin_cmd(shell, args)?,
+            "pulse" => self.opm_cmd(shell, args)?,
+            "pwm" => self.pwm_cmd(shell, args)?,
+            "servo" => self.servo_cmd(shell, args)?,
+            "spin" => self.spin_cmd(shell, args)?,
+            "trigger" => self.trigger_cmd(shell, args)?,
+            "" => shell.write_str(CR)?,
+            _ => write!(shell, "{0:}unsupported command: \"{1:}\"{0:}", CR, cmd)?,
+        }
+        shell.write_str(SHELL_PROMPT)?;
+        Ok(())
+    }
+
+    fn control(&mut self, shell: &mut Shell, code: u8) -> EnvResult {
+        match code {
+            control::CTRL_C => {
+                self.adc.lock(|adc| adc.timer.pause());
+                shell.write_str(CR)?;
+                shell.write_str(SHELL_PROMPT)?;
+            }
+            control::CTRL_W => self.gpio.lock(|gpio| gpio.pin_a.set_high().unwrap()),
+            control::CTRL_E => self.gpio.lock(|gpio| gpio.pin_a.set_low().unwrap()),
+            control::CTRL_S => self.gpio.lock(|gpio| gpio.pin_b.set_high().unwrap()),
+            control::CTRL_D => self.gpio.lock(|gpio| gpio.pin_b.set_low().unwrap()),
+            control::CTRL_Z => self.opm.lock(|opm| opm.generate()),
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+pub const AUTOCOMPLETE: Autocomplete = autocomplete::StaticAutocomplete([
+    "adc ",
     "clear",
     "duty ",
     "help ",
@@ -302,7 +282,7 @@ const SHELL_PROMPT: &str = "\x1b[35m» \x1b[0m";
 const HELP: &str = "\r\n\
 \x1b[33mPlacebo Shell \x1b[32mv0.0.1\x1b[0m\r\n\r\n\
 COMMANDS:\r\n\
-\x20 adc                  Measure voltage\r\n\
+\x20 adc [freq]           Measure voltage\r\n\
 \x20 duty <1|2|3> <duty>  Set PWM channel duty (0-100)\r\n\
 \x20 pin <a|b> <level>    Set pin level (low, high)\r\n\
 \x20 pwm <freq>           Set PWM frequency (1-1000000)\r\n\
@@ -313,8 +293,9 @@ COMMANDS:\r\n\
 \x20 help [pinout|usage]  Print help message\r\n\
 \x20 clear                Clear screen\r\n\r\n\
 CONTROL KEYS:\r\n\
+\x20 Ctrl+C               Stop background ADC process\r\n\
 \x20 Ctrl+Z               Emulate pulse trigger\r\n\
-\x20 Ctrl+X / Ctrl+C      Assert/De-assert pin A(Push-Pull)\r\n\
+\x20 Ctrl+W / Ctrl+E      Assert/De-assert pin A(Push-Pull)\r\n\
 \x20 Ctrl+S / Ctrl+D      Assert/De-assert pin B(Open-Drain)\r\n\r\n\
 LINKS:\r\n\
 \x20 * \x1b[34mhttps://github.com/dotcypress/placebo-shell \x1b[0m\r\n\
@@ -324,6 +305,8 @@ LINKS:\r\n\
 const USAGE: &str = "\r\n\
 USAGE EXAMPLES:\r\n\
 \x20 help pinout     Print pinout\r\n\
+\x20 adc             Measure Vdd and ADC pin voltage\r\n\
+\x20 adc 5           Continuously measure ADC pin voltage\r\n\
 \x20 duty 1 50       Set PWM channel 1 duty cycle to 50%\r\n\
 \x20 pin a high      Assert pin A\r\n\
 \x20 pin b low       De-assert pin B\r\n\

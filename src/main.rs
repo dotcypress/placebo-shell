@@ -11,42 +11,56 @@ extern crate stm32g0xx_hal as hal;
 mod shell;
 mod stepper;
 
-use hal::analog::adc;
 use hal::gpio::*;
 use hal::prelude::*;
 use hal::serial::*;
-use hal::{rcc, stm32, exti};
 use hal::timer::*;
+use hal::{analog::adc, exti, rcc, stm32};
 use shell::*;
 use ushell::{history::LRUHistory, UShell};
 
-#[rtic::app(device = hal::stm32, peripherals = true)]
-mod app {
-    use super::*;
+pub struct Gpio {
+    pub trigger: Option<SignalEdge>,
+    pub pin_a: gpiob::PB7<Output<PushPull>>,
+    pub pin_b: gpioc::PC14<Output<OpenDrain>>,
+}
 
-    type Stepper = stepper::Stepper<
+pub struct Adc {
+    pub adc: adc::Adc,
+    pub vbat: adc::VBat,
+    pub pin: gpioa::PA1<Analog>,
+    pub timer: Timer<stm32::TIM17>,
+}
+
+pub struct Pwm {
+    pub pwm: pwm::Pwm<stm32::TIM3>,
+    pub ch1: pwm::PwmPin<stm32::TIM3, Channel1>,
+    pub ch2: pwm::PwmPin<stm32::TIM3, Channel2>,
+    pub ch3: pwm::PwmPin<stm32::TIM3, Channel3>,
+}
+
+pub struct Stepper {
+    pub timer: Timer<stm32::TIM16>,
+    pub motor: stepper::StepperMotor<
         gpioa::PA12<Output<PushPull>>,
         gpioa::PA11<Output<PushPull>>,
         gpioa::PA6<Output<PushPull>>,
         gpioa::PA5<Output<PushPull>>,
-    >;
+    >,
+}
+
+#[rtic::app(device = hal::stm32, peripherals = true, dispatchers = [CEC])]
+mod app {
+    use super::*;
 
     #[shared]
     struct Shared {
-        adc: adc::Adc,
-        adc_pin: gpioa::PA1<Analog>,
-        vbat: adc::VBat,
+        adc: Adc,
+        pwm: Pwm,
+        gpio: Gpio,
         opm: opm::Opm<stm32::TIM2>,
-        trigger: Option<SignalEdge>,
-        pin_a: gpiob::PB7<Output<PushPull>>,
-        pin_b: gpioc::PC14<Output<OpenDrain>>,
-        stepper: Stepper,
-        stepper_timer: Timer<stm32::TIM16>,
         servo: pwm::PwmPin<stm32::TIM14, Channel1>,
-        pwm: pwm::Pwm<stm32::TIM3>,
-        pwm_ch1: pwm::PwmPin<stm32::TIM3, Channel1>,
-        pwm_ch2: pwm::PwmPin<stm32::TIM3, Channel2>,
-        pwm_ch3: pwm::PwmPin<stm32::TIM3, Channel3>,
+        stepper: Stepper,
     }
 
     #[local]
@@ -77,38 +91,49 @@ mod app {
         let trigger = None;
 
         let mut exti = ctx.device.EXTI;
-        port_c.pc15
+        port_c
+            .pc15
             .into_pull_down_input()
             .listen(SignalEdge::All, &mut exti);
 
         let pwm = ctx.device.TIM3.pwm(10.khz(), &mut rcc);
-        let mut pwm_ch1 = pwm.bind_pin(port_b.pb4);
-        let mut pwm_ch2 = pwm.bind_pin(port_a.pa7);
-        let mut pwm_ch3 = pwm.bind_pin(port_b.pb0);
+        let mut ch1 = pwm.bind_pin(port_b.pb4);
+        let mut ch2 = pwm.bind_pin(port_a.pa7);
+        let mut ch3 = pwm.bind_pin(port_b.pb0);
 
         let servo_pwm = ctx.device.TIM14.pwm(100.hz(), &mut rcc);
         let mut servo = servo_pwm.bind_pin(port_a.pa4);
         servo.set_duty(0);
         servo.enable();
 
-        let duty = pwm_ch1.get_max_duty() / 2;
-        pwm_ch1.set_duty(duty);
-        pwm_ch2.set_duty(duty);
-        pwm_ch3.set_duty(duty);
+        let duty = ch1.get_max_duty() / 2;
+        ch1.set_duty(duty);
+        ch2.set_duty(duty);
+        ch3.set_duty(duty);
 
-        pwm_ch1.enable();
-        pwm_ch2.enable();
-        pwm_ch3.enable();
+        ch1.enable();
+        ch2.enable();
+        ch3.enable();
 
-        let mut stepper_timer = ctx.device.TIM16.timer(&mut rcc);
-        stepper_timer.listen();
+        let pwm = Pwm { pwm, ch1, ch2, ch3 };
 
-        let stepper = stepper::Stepper::new(
+        let mut adc_timer = ctx.device.TIM17.timer(&mut rcc);
+        adc_timer.listen();
+
+        let motor = stepper::StepperMotor::new(
             port_a.pa12.into(),
             port_a.pa11.into(),
             port_a.pa6.into(),
             port_a.pa5.into(),
         );
+
+        let mut stepper_timer = ctx.device.TIM16.timer(&mut rcc);
+        stepper_timer.listen();
+
+        let stepper = Stepper {
+            motor,
+            timer: stepper_timer,
+        };
 
         let mut delay = ctx.core.SYST.delay(&mut rcc);
         let mut adc = ctx.device.ADC.constrain(&mut rcc);
@@ -118,54 +143,52 @@ mod app {
         adc.set_oversampling_shift(16);
         adc.oversampling_enable(true);
 
-        delay.delay(20.us());
+        delay.delay(100.us());
         adc.calibrate();
 
         let mut vbat = adc::VBat::new();
         vbat.enable(&mut adc);
 
-        let adc_pin = port_a.pa1;
+        let adc = Adc {
+            adc,
+            vbat,
+            pin: port_a.pa1,
+            timer: adc_timer,
+        };
 
         let pin_a = port_b.pb7.into();
         let pin_b = port_c.pc14.into();
 
-        (
-            Shared {
-                adc,
-                adc_pin,
-                pin_a,
-                pin_b,
-                vbat,
-                pwm,
-                opm,
-                trigger,
-                pwm_ch1,
-                pwm_ch2,
-                pwm_ch3,
-                servo,
-                stepper,
-                stepper_timer,
-            },
-            Local { exti, shell },
-            init::Monotonics(),
-        )
+        let gpio = Gpio {
+            pin_a,
+            pin_b,
+            trigger,
+        };
+
+        let local = Local { exti, shell };
+
+        let shared = Shared {
+            adc,
+            gpio,
+            opm,
+            pwm,
+            servo,
+            stepper,
+        };
+
+        (shared, local, init::Monotonics())
     }
 
-    #[task(binds = TIM16, priority = 2, shared = [stepper, stepper_timer])]
-    fn stepper_timer_tick(mut ctx: stepper_timer_tick::Context) {
-        ctx.shared.stepper.lock(|stepper| stepper.turn());
-        ctx.shared.stepper_timer.lock(|tim| tim.clear_irq());
-    }
+    #[task(binds = EXTI4_15, priority = 4, local = [exti], shared = [opm, gpio])]
+    fn trigger(ctx: trigger::Context) {
+        use SignalEdge::*;
 
-    #[task(binds = EXTI4_15, priority = 2, local = [exti], shared = [opm, trigger])]
-    fn ext_trigger(ctx: ext_trigger::Context) {
-        let mut trigger = ctx.shared.trigger;
-        let mut opm = ctx.shared.opm;
         let exti = ctx.local.exti;
-        let generate = trigger.lock(|t| match t {
-            Some(SignalEdge::Falling) => exti.is_pending(exti::Event::GPIO15, SignalEdge::Falling),
-            Some(SignalEdge::Rising) => exti.is_pending(exti::Event::GPIO15, SignalEdge::Rising),
-            _ => false
+        let trigger::SharedResources { mut gpio, mut opm } = ctx.shared;
+        let generate = gpio.lock(|gpio| match gpio.trigger {
+            Some(Falling) => exti.is_pending(exti::Event::GPIO15, Falling),
+            Some(Rising) => exti.is_pending(exti::Event::GPIO15, Rising),
+            _ => false,
         });
         if generate {
             opm.lock(|opm| opm.generate());
@@ -173,13 +196,28 @@ mod app {
         exti.unpend(exti::Event::GPIO15);
     }
 
-    #[task(
-        binds = USART2, 
-        priority = 1, 
-        local = [shell], 
-        shared = [adc, adc_pin, pin_a, pin_b, vbat, opm, trigger, pwm, pwm_ch1, pwm_ch2, pwm_ch3, servo, stepper, stepper_timer]
-    )]
-    fn serial_data(mut ctx: serial_data::Context) {
-        ctx.local.shell.spin(&mut ctx.shared).ok();
+    #[task(binds = TIM16, priority = 3, shared = [stepper])]
+    fn stepper_timer(ctx: stepper_timer::Context) {
+        let mut stepper = ctx.shared.stepper;
+        stepper.lock(|stepper| {
+            stepper.motor.turn();
+            stepper.timer.clear_irq();
+        });
+    }
+
+    #[task(priority = 2, capacity = 8, local = [shell], shared = [adc, gpio, opm, pwm, servo, stepper])]
+    fn env(ctx: env::Context, sig: ShellSignal) {
+        let mut env = ctx.shared;
+        env.on_signal(ctx.local.shell, sig).ok();
+    }
+
+    #[task(binds = TIM17)]
+    fn adc_timer(_: adc_timer::Context) {
+        env::spawn(ShellSignal::ReadAdc).ok();
+    }
+
+    #[task(binds = USART2)]
+    fn uart_rx(_: uart_rx::Context) {
+        env::spawn(ShellSignal::ReadUart).ok();
     }
 }

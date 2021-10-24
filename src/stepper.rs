@@ -6,15 +6,15 @@ pub enum Rotation {
     Ccw,
 }
 
-pub struct Stepper<A, B, C, D> {
+pub struct StepperMotor<A, B, C, D> {
     pins: (A, B, C, D),
     dir: Rotation,
     step: usize,
 }
 
-impl<A: OutputPin, B: OutputPin, C: OutputPin, D: OutputPin> Stepper<A, B, C, D> {
+impl<A: OutputPin, B: OutputPin, C: OutputPin, D: OutputPin> StepperMotor<A, B, C, D> {
     pub fn new(a: A, b: B, c: C, d: D) -> Self {
-        Stepper {
+        Self {
             pins: (a, b, c, d),
             step: 0,
             dir: Rotation::Cw,
