@@ -2,6 +2,7 @@ use btoi::btoi;
 use core::fmt::Write;
 use hal::prelude::*;
 use hal::{gpio::SignalEdge, serial, stm32};
+use infrared::protocols::nec::NecCommand;
 use rtic::Mutex;
 use ushell::*;
 
@@ -12,24 +13,29 @@ pub type History = history::LRUHistory<{ CMD_MAX_LEN }, 32>;
 pub type Uart = serial::Serial<stm32::USART2, serial::BasicConfig>;
 pub type Shell = UShell<Uart, Autocomplete, History, { CMD_MAX_LEN }>;
 
-pub enum ShellSignal {
-    ReadUart,
-    ReadAdc,
+pub enum EnvSignal {
+    SpinShell,
+    LogAdc(u16),
+    LogIRCmd(NecCommand),
 }
 
 pub type Env<'a> = crate::app::env::SharedResources<'a>;
 pub type EnvResult = SpinResult<Uart, ()>;
 
 impl Env<'_> {
-    pub fn on_signal(&mut self, shell: &mut Shell, sig: ShellSignal) -> EnvResult {
+    pub fn on_signal(&mut self, shell: &mut Shell, sig: EnvSignal) -> EnvResult {
         match sig {
-            ShellSignal::ReadUart => shell.spin(self),
-            ShellSignal::ReadAdc => {
-                let voltage = self.adc.lock(|adc| {
-                    adc.timer.clear_irq();
-                    adc.adc.read_voltage(&mut adc.pin).unwrap()
-                });
-                write!(shell, "{}mV\r\n", voltage)?;
+            EnvSignal::SpinShell => shell.spin(self),
+            EnvSignal::LogAdc(voltage) => {
+                write!(shell, "\r\n{}mV", voltage)?;
+                Ok(())
+            }
+            EnvSignal::LogIRCmd(cmd) => {
+                write!(
+                    shell,
+                    "\r\nIR command: addr: 0x{:x}, cmd: 0x{:x}, repeat: {}",
+                    cmd.addr, cmd.cmd, cmd.repeat
+                )?;
                 Ok(())
             }
         }
@@ -319,17 +325,17 @@ USAGE EXAMPLES:\r\n\
 ";
 
 const PINOUT: &str = "\r\n\
-\x20                STM32G0xxFx  \r\n\
-\x20               ╔═══════════╗ \r\n\
-\x20 (A)   PB7|PB8 ╣1 ¤      20╠ PB3|PB4|PB5|PB6  (PWM1)\r\n\
-\x20 (B)  PC9|PC14 ╣2        19╠ PA14|PA15       (SWDIO)\r\n\
-\x20 (TRIG)   PC15 ╣3        18╠ PA13           (SWDCLK)\r\n\
-\x20           Vdd ╣4        17╠ PA12[PA10]  (STEPPER_A)\r\n\
-\x20           Vss ╣5        16╠ PA11[PA9]   (STEPPER_B)\r\n\
-\x20          nRst ╣6        15╠ PA8|PB0|PB1|PB2  (PWM3)\r\n\
-\x20 (PULSE)   PA0 ╣7        14╠ PA7              (PWM2)\r\n\
-\x20 (ADC)     PA1 ╣8        13╠ PA6         (STEPPER_C)\r\n\
-\x20 (TX)      PA2 ╣9        12╠ PA5         (STEPPER_D)\r\n\
-\x20 (RX)      PA3 ╣10       11╠ PA4             (SERVO)\r\n\
-\x20               ╚═══════════╝ \r\n\r\n\
+\x20                 STM32G0xxFx  \r\n\
+\x20                ╔═══════════╗ \r\n\
+\x20 (A)    PB7|PB8 ╣1 ¤      20╠ PB3|PB4|PB5|PB6  (PWM1)\r\n\
+\x20 (B)   PC9|PC14 ╣2        19╠ PA14|PA15       (SWDIO)\r\n\
+\x20 (TRG|IR)  PC15 ╣3        18╠ PA13           (SWDCLK)\r\n\
+\x20            Vdd ╣4        17╠ PA12[PA10]  (STEPPER_A)\r\n\
+\x20            Vss ╣5        16╠ PA11[PA9]   (STEPPER_B)\r\n\
+\x20           nRst ╣6        15╠ PA8|PB0|PB1|PB2  (PWM3)\r\n\
+\x20 (PULSE)    PA0 ╣7        14╠ PA7              (PWM2)\r\n\
+\x20 (ADC)      PA1 ╣8        13╠ PA6         (STEPPER_C)\r\n\
+\x20 (TX)       PA2 ╣9        12╠ PA5         (STEPPER_D)\r\n\
+\x20 (RX)       PA3 ╣10       11╠ PA4             (SERVO)\r\n\
+\x20                ╚═══════════╝ \r\n\r\n\
 ";

@@ -16,6 +16,7 @@ use hal::prelude::*;
 use hal::serial::*;
 use hal::timer::*;
 use hal::{analog::adc, exti, rcc, stm32};
+use infrared::{protocols::Nec, PeriodicReceiver};
 use shell::*;
 use ushell::{history::LRUHistory, UShell};
 
@@ -23,6 +24,11 @@ pub struct Gpio {
     pub trigger: Option<SignalEdge>,
     pub pin_a: gpiob::PB7<Output<PushPull>>,
     pub pin_b: gpioc::PC14<Output<OpenDrain>>,
+}
+
+pub struct IR {
+    pub receiver: PeriodicReceiver<Nec, gpioc::PC15<Input<Floating>>>,
+    pub timer: Timer<stm32::TIM1>,
 }
 
 pub struct Adc {
@@ -67,6 +73,7 @@ mod app {
     struct Local {
         exti: stm32::EXTI,
         shell: Shell,
+        ir: IR,
     }
 
     #[init]
@@ -91,10 +98,19 @@ mod app {
         let trigger = None;
 
         let mut exti = ctx.device.EXTI;
-        port_c
+        let trigger_pin = port_c
             .pc15
             .into_pull_down_input()
             .listen(SignalEdge::All, &mut exti);
+
+        let mut ir_timer = ctx.device.TIM1.timer(&mut rcc);
+        ir_timer.start(20_000.hz());
+        ir_timer.listen();
+
+        let ir = IR {
+            receiver: PeriodicReceiver::new(trigger_pin, 20_000),
+            timer: ir_timer,
+        };
 
         let pwm = ctx.device.TIM3.pwm(10.khz(), &mut rcc);
         let mut ch1 = pwm.bind_pin(port_b.pb4);
@@ -165,7 +181,7 @@ mod app {
             trigger,
         };
 
-        let local = Local { exti, shell };
+        let local = Local { ir, exti, shell };
 
         let shared = Shared {
             adc,
@@ -181,10 +197,10 @@ mod app {
 
     #[task(binds = EXTI4_15, priority = 4, local = [exti], shared = [opm, gpio])]
     fn trigger(ctx: trigger::Context) {
-        use SignalEdge::*;
-
         let exti = ctx.local.exti;
         let trigger::SharedResources { mut gpio, mut opm } = ctx.shared;
+
+        use SignalEdge::*;
         let generate = gpio.lock(|gpio| match gpio.trigger {
             Some(Falling) => exti.is_pending(exti::Event::GPIO15, Falling),
             Some(Rising) => exti.is_pending(exti::Event::GPIO15, Rising),
@@ -205,19 +221,33 @@ mod app {
         });
     }
 
+    #[task(binds = TIM17, priority = 3, shared = [adc])]
+    fn adc_timer(ctx: adc_timer::Context) {
+        let mut adc = ctx.shared.adc;
+        let voltage = adc.lock(|adc| {
+            adc.timer.clear_irq();
+            adc.adc.read_voltage(&mut adc.pin).unwrap()
+        });
+
+        env::spawn(EnvSignal::LogAdc(voltage)).ok();
+    }
+
+    #[task(binds = TIM1_BRK_UP_TRG_COM, priority = 3, local = [ir])]
+    fn ir_timer(ctx: ir_timer::Context) {
+        ctx.local.ir.timer.clear_irq();
+        if let Ok(Some(cmd)) = ctx.local.ir.receiver.poll() {
+            env::spawn(EnvSignal::LogIRCmd(cmd)).ok();
+        }
+    }
+
+    #[task(binds = USART2, priority = 1)]
+    fn uart_rx(_: uart_rx::Context) {
+        env::spawn(EnvSignal::SpinShell).ok();
+    }
+
     #[task(priority = 2, capacity = 8, local = [shell], shared = [adc, gpio, opm, pwm, servo, stepper])]
-    fn env(ctx: env::Context, sig: ShellSignal) {
+    fn env(ctx: env::Context, sig: EnvSignal) {
         let mut env = ctx.shared;
         env.on_signal(ctx.local.shell, sig).ok();
-    }
-
-    #[task(binds = TIM17)]
-    fn adc_timer(_: adc_timer::Context) {
-        env::spawn(ShellSignal::ReadAdc).ok();
-    }
-
-    #[task(binds = USART2)]
-    fn uart_rx(_: uart_rx::Context) {
-        env::spawn(ShellSignal::ReadUart).ok();
     }
 }

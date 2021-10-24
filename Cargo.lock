@@ -211,6 +211,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "infrared"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6328c6548e218efc9fb8373c65d44929923df59bb139d1855c0a6eeaaf7deda8"
+dependencies = [
+ "embedded-hal",
+ "nb 1.0.0",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -323,6 +333,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "cortex-m-rtic",
+ "infrared",
  "panic-halt",
  "stm32g0xx-hal",
  "ushell",
