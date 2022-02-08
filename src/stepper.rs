@@ -53,6 +53,7 @@ impl<A: OutputPin, B: OutputPin, C: OutputPin, D: OutputPin> StepperMotor<A, B, 
         Self::drive_pin(&mut self.pins.2, STEPS[self.step] & 0b0010 == 0b0010);
         Self::drive_pin(&mut self.pins.3, STEPS[self.step] & 0b0001 == 0b0001);
     }
+
     fn drive_pin(pin: &mut impl OutputPin, val: bool) {
         if val {
             pin.set_high().ok();
