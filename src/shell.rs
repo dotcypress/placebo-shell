@@ -180,7 +180,23 @@ impl Env<'_> {
     }
 
     fn spin_cmd(&mut self, shell: &mut Shell, args: &str) -> EnvResult {
+        use crate::stepper::Mode::*;
         use crate::stepper::Rotation::*;
+
+        let args = match args.split_once(" ") {
+            Some(("b", args)) => {
+                self.stepper.lock(|st| st.motor.set_mode(Bipolar));
+                args
+            }
+            Some(("u", args)) => {
+                self.stepper.lock(|st| st.motor.set_mode(Unipolar));
+                args
+            }
+            _ => {
+                write!(shell, "{0:}unsupported speed{0:}", CR)?;
+                return Ok(());
+            }
+        };
 
         match args.split_once(" ") {
             Some((dir, speed)) => match btoi::<u32>(speed.as_bytes()) {
@@ -286,23 +302,23 @@ pub const AUTOCOMPLETE: Autocomplete = autocomplete::StaticAutocomplete([
 const CR: &str = "\r\n";
 const SHELL_PROMPT: &str = "\x1b[35m» \x1b[0m";
 const HELP: &str = "\r\n\
-\x1b[33mPlacebo Shell \x1b[32mv0.0.1\x1b[0m\r\n\r\n\
+\x1b[33mPlacebo Shell \x1b[32mv0.1.0\x1b[0m\r\n\r\n\
 COMMANDS:\r\n\
-\x20 adc [freq]           Measure voltage\r\n\
-\x20 duty <1|2|3> <duty>  Set PWM channel duty (0-100)\r\n\
-\x20 pin <a|b> <level>    Set pin level (low, high)\r\n\
-\x20 pwm <freq>           Set PWM frequency (1-1000000)\r\n\
-\x20 pulse <width>        Generate pulse (1us-1000ms)\r\n\
-\x20 trigger <edge>       Set external trigger edge (rise, fall, off)\r\n\
-\x20 servo <angle>        Turn servo to angle (0-180)\r\n\
-\x20 spin <cw|ccw> <pps>  Set stepper rotation direction and speed\r\n\
-\x20 help [pinout|usage]  Print help message\r\n\
-\x20 clear                Clear screen\r\n\r\n\
+\x20 adc [freq]                 Measure voltage\r\n\
+\x20 duty <1|2|3> <duty>        Set PWM channel duty (0-100)\r\n\
+\x20 pin <a|b> <level>          Set pin level (low, high)\r\n\
+\x20 pwm <freq>                 Set PWM frequency (1-1000000)\r\n\
+\x20 pulse <width>              Generate pulse (1us-1000ms)\r\n\
+\x20 trigger <edge>             Set external trigger edge (rise, fall, off)\r\n\
+\x20 servo <angle>              Turn servo to angle (0-180)\r\n\
+\x20 spin <b|u> <cw|ccw> <pps>  Set stepper rotation direction and speed\r\n\
+\x20 help [pinout|usage]        Print help message\r\n\
+\x20 clear                      Clear screen\r\n\r\n\
 CONTROL KEYS:\r\n\
-\x20 Ctrl+C               Stop background ADC process\r\n\
-\x20 Ctrl+Z               Emulate pulse trigger\r\n\
-\x20 Ctrl+W / Ctrl+E      Assert/De-assert pin A(Push-Pull)\r\n\
-\x20 Ctrl+S / Ctrl+D      Assert/De-assert pin B(Open-Drain)\r\n\r\n\
+\x20 Ctrl+C                      Stop background ADC process\r\n\
+\x20 Ctrl+Z                      Emulate pulse trigger\r\n\
+\x20 Ctrl+W / Ctrl+E             Assert/De-assert pin A(Push-Pull)\r\n\
+\x20 Ctrl+S / Ctrl+D             Assert/De-assert pin B(Open-Drain)\r\n\r\n\
 LINKS:\r\n\
 \x20 * \x1b[34mhttps://github.com/dotcypress/placebo-shell \x1b[0m\r\n\
 \x20 * \x1b[34mhttps://github.com/dotcypress/placebo \x1b[0m\r\n\r\n\
@@ -321,7 +337,8 @@ USAGE EXAMPLES:\r\n\
 \x20 servo 45        Turn servo to 45 degrees\r\n\
 \x20 trigger fall    Set external trigger to falling edge\r\n\
 \x20 trigger off     Disable pulse external trigger\r\n\
-\x20 spin cw 200     Rotate stepper clock-wise 200 pulses per second\r\n\r\n\
+\x20 spin b cw 100   Rotate bipolar stepper clock-wise 100 pulses per second\r\n
+\x20 spin u cw 200   Rotate unipolar stepper clock-wise 200 pulses per second\r\n\r\n\
 ";
 
 const PINOUT: &str = "\r\n\

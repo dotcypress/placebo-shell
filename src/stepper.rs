@@ -1,14 +1,29 @@
 use hal::prelude::*;
 
+const UNIPOLAR_STEPS: [usize; 8] = [
+    0b0001, 0b0011, 0b0010, 0b0110, 0b0100, 0b1100, 0b1000, 0b1001,
+];
+
+const BIPOLAR_STEPS: [usize; 8] = [
+    0b1001, 0b1001, 0b1100, 0b1100, 0b0110, 0b0110, 0b0011, 0b0011,
+];
+
 #[derive(PartialEq)]
 pub enum Rotation {
     Cw,
     Ccw,
 }
 
+#[derive(PartialEq)]
+pub enum Mode {
+    Bipolar,
+    Unipolar,
+}
+
 pub struct StepperMotor<A, B, C, D> {
     pins: (A, B, C, D),
     dir: Rotation,
+    mode: Mode,
     step: usize,
 }
 
@@ -17,8 +32,13 @@ impl<A: OutputPin, B: OutputPin, C: OutputPin, D: OutputPin> StepperMotor<A, B, 
         Self {
             pins: (a, b, c, d),
             step: 0,
+            mode: Mode::Unipolar,
             dir: Rotation::Cw,
         }
+    }
+
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.mode = mode;
     }
 
     pub fn set_dir(&mut self, dir: Rotation) {
@@ -33,25 +53,27 @@ impl<A: OutputPin, B: OutputPin, C: OutputPin, D: OutputPin> StepperMotor<A, B, 
     }
 
     pub fn turn(&mut self) {
-        const STEPS: [usize; 8] = [
-            0b0001, 0b0011, 0b0010, 0b0110, 0b0100, 0b1100, 0b1000, 0b1001,
-        ];
+        let steps = if self.mode == Mode::Unipolar {
+            UNIPOLAR_STEPS
+        } else {
+            BIPOLAR_STEPS
+        };
         self.step = if self.dir == Rotation::Cw {
-            if self.step == STEPS.len() - 1 {
+            if self.step == steps.len() - 1 {
                 0
             } else {
                 self.step + 1
             }
         } else if self.step == 0 {
-            STEPS.len() - 1
+            steps.len() - 1
         } else {
             self.step - 1
         };
 
-        Self::drive_pin(&mut self.pins.0, STEPS[self.step] & 0b1000 == 0b1000);
-        Self::drive_pin(&mut self.pins.1, STEPS[self.step] & 0b0100 == 0b0100);
-        Self::drive_pin(&mut self.pins.2, STEPS[self.step] & 0b0010 == 0b0010);
-        Self::drive_pin(&mut self.pins.3, STEPS[self.step] & 0b0001 == 0b0001);
+        Self::drive_pin(&mut self.pins.0, steps[self.step] & 0b1000 > 0);
+        Self::drive_pin(&mut self.pins.1, steps[self.step] & 0b0100 > 0);
+        Self::drive_pin(&mut self.pins.2, steps[self.step] & 0b0010 > 0);
+        Self::drive_pin(&mut self.pins.3, steps[self.step] & 0b0001 > 0);
     }
 
     fn drive_pin(pin: &mut impl OutputPin, val: bool) {
