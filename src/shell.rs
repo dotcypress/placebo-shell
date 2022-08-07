@@ -1,6 +1,7 @@
 use btoi::btoi;
 use core::fmt::Write;
 use hal::prelude::*;
+use hal::time::Hertz;
 use hal::{gpio::SignalEdge, serial, stm32};
 use infrared::protocols::nec::NecCommand;
 use rtic::Mutex;
@@ -52,7 +53,8 @@ impl Env<'_> {
         } else {
             match btoi::<u32>(args.as_bytes()) {
                 Ok(freq) if freq <= 1_000_000 => {
-                    self.adc.lock(|adc| adc.timer.start(freq.hz()));
+                    self.adc
+                        .lock(|adc| adc.timer.start(Hertz::from_raw(freq).into_duration()));
                     shell.write_str(CR)?;
                 }
                 _ => write!(shell, "{0:}invalid adc arguments{0:}", CR)?,
@@ -65,7 +67,7 @@ impl Env<'_> {
         match btoi::<u32>(args.as_bytes()) {
             Ok(freq) if freq <= 1_000_000 => {
                 self.pwm.lock(|pwm| {
-                    pwm.pwm.set_freq(freq.hz());
+                    pwm.pwm.set_freq(freq.Hz());
 
                     let duty = pwm.ch1.get_max_duty() / 2;
                     pwm.ch1.set_duty(duty);
@@ -131,7 +133,7 @@ impl Env<'_> {
         {
             Some((width, mul)) => match btoi::<u32>(width.as_bytes()) {
                 Ok(pulse) => {
-                    let pulse = (pulse * mul).us();
+                    let pulse = (pulse * mul).micros();
                     self.opm.lock(|opm| {
                         opm.set_pulse(pulse);
                         opm.generate();
@@ -212,7 +214,7 @@ impl Env<'_> {
 
                     self.stepper.lock(|st| {
                         if speed > 0 {
-                            st.timer.start(speed.hz());
+                            st.timer.start(Hertz::from_raw(speed).into_duration());
                         } else {
                             st.motor.disable();
                             st.timer.pause();

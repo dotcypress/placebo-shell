@@ -165,6 +165,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "fugit"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6d8595783d5ca52f0e9830036b3d24f359fae0fcc6bb5fde41f2dd82997cb58"
+dependencies = [
+ "gcd",
+]
+
+[[package]]
+name = "gcd"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f37978dab2ca789938a83b2f8bc1ef32db6633af9051a6cd409eff72cbaaa79a"
+dependencies = [
+ "paste",
+]
+
+[[package]]
 name = "hash32"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -261,6 +279,12 @@ name = "panic-halt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "de96540e0ebde571dc55c73d60ef407c653844e6f9a1e2fdbd40c07b9252d812"
+
+[[package]]
+name = "paste"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c520e05135d6e763148b6426a837e239041653ba7becd2e538c076c738025fc"
 
 [[package]]
 name = "placebo-shell"
@@ -433,11 +457,11 @@ checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
 name = "stm32g0"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97b66919e47e1507c8411e9693ce5f4040b3204601f7c8f349951e565a0640a2"
+checksum = "dfc2ac544cea741c92a501bfd027d197354cd22ee92b439aea26d2ee0b55bcd7"
 dependencies = [
- "bare-metal 0.2.5",
+ "bare-metal 1.0.0",
  "cortex-m",
  "cortex-m-rt",
  "vcell",
@@ -445,13 +469,12 @@ dependencies = [
 
 [[package]]
 name = "stm32g0xx-hal"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bfb57f421c3acb1dafef58cfee1d6beefab85c7bf618080aeef4c4a3c3c250d"
+version = "0.1.5"
 dependencies = [
  "bare-metal 1.0.0",
  "cortex-m",
  "embedded-hal",
+ "fugit",
  "nb 1.0.0",
  "stm32g0",
  "void",

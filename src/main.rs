@@ -14,11 +14,14 @@ mod stepper;
 use hal::gpio::*;
 use hal::prelude::*;
 use hal::serial::*;
+use hal::time::Hertz;
 use hal::timer::*;
 use hal::{analog::adc, exti, rcc, stm32};
 use infrared::{protocols::Nec, PeriodicReceiver};
 use shell::*;
 use ushell::{history::LRUHistory, UShell};
+
+pub const IR_POLL_FREQ: Hertz = Hertz::from_raw(20_000);
 
 pub struct Gpio {
     pub trigger: Option<SignalEdge>,
@@ -88,12 +91,12 @@ mod app {
         let mut uart = ctx
             .device
             .USART2
-            .usart(port_a.pa2, port_a.pa3, uart_cfg, &mut rcc)
+            .usart((port_a.pa2, port_a.pa3), uart_cfg, &mut rcc)
             .expect("Failed to init serial port");
         uart.listen(Event::Rxne);
         let shell = UShell::new(uart, AUTOCOMPLETE, LRUHistory::default());
 
-        let opm = ctx.device.TIM2.opm(10.ms(), &mut rcc);
+        let opm = ctx.device.TIM2.opm(10.millis(), &mut rcc);
         opm.bind_pin(port_a.pa0).enable();
         let trigger = None;
 
@@ -104,20 +107,20 @@ mod app {
             .listen(SignalEdge::All, &mut exti);
 
         let mut ir_timer = ctx.device.TIM1.timer(&mut rcc);
-        ir_timer.start(20_000.hz());
+        ir_timer.start(IR_POLL_FREQ.into_duration());
         ir_timer.listen();
 
         let ir = IR {
-            receiver: PeriodicReceiver::new(trigger_pin, 20_000),
+            receiver: PeriodicReceiver::new(trigger_pin, IR_POLL_FREQ.raw()),
             timer: ir_timer,
         };
 
-        let pwm = ctx.device.TIM3.pwm(10.khz(), &mut rcc);
+        let pwm = ctx.device.TIM3.pwm(10.kHz(), &mut rcc);
         let mut ch1 = pwm.bind_pin(port_b.pb4);
         let mut ch2 = pwm.bind_pin(port_a.pa7);
         let mut ch3 = pwm.bind_pin(port_b.pb0);
 
-        let servo_pwm = ctx.device.TIM14.pwm(100.hz(), &mut rcc);
+        let servo_pwm = ctx.device.TIM14.pwm(100.Hz(), &mut rcc);
         let mut servo = servo_pwm.bind_pin(port_a.pa4);
         servo.set_duty(0);
         servo.enable();
@@ -159,7 +162,7 @@ mod app {
         adc.set_oversampling_shift(16);
         adc.oversampling_enable(true);
 
-        delay.delay(100.us());
+        delay.delay(100.micros());
         adc.calibrate();
 
         let mut vbat = adc::VBat::new();
